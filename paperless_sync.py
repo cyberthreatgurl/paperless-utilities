@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import os
 import re
 import requests
 import shutil
+import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 import pypdf
 from pypdf.errors import DependencyError, FileNotDecryptedError, PyPdfError, WrongPasswordError
 
+load_dotenv()
+
 # -----------------------------
-# CONFIGURATION
+# CONFIGURATION (from .env)
 # -----------------------------
-PAPERLESS_URL = "http://192.168.1.12:8000"   # Change to your server hostname/IP
-PAPERLESS_TOKEN = "ca60a3e9d5c7977d03f57b57be26f0bf4c8169da"
+_required = ("PAPERLESS_URL", "PAPERLESS_TOKEN", "CONSUME_DIR")
+_missing  = [v for v in _required if not os.getenv(v)]
+if _missing:
+    print(f"ERROR: Missing required environment variables: {', '.join(_missing)}")
+    print("Copy .env.example to .env and fill in your values.")
+    sys.exit(1)
 
-# Path to your mounted consume folder
-CONSUME_DIR = Path("/Volumes/consume")
-
-# Maximum allowed file size (example: 25 MB)
-MAXIMUM_FILE_SIZE = 25 * 1024 * 1024
-
-# Log file
-LOG_FILE = Path("logs/paperless_sync.log")
-
-# Quarantine folder for corrupt / password-protected / oversized PDFs
-CHECK_DIR = Path("check")
+PAPERLESS_URL       = os.environ["PAPERLESS_URL"].rstrip("/")
+PAPERLESS_TOKEN     = os.environ["PAPERLESS_TOKEN"]
+CONSUME_DIR         = Path(os.environ["CONSUME_DIR"])
+MAXIMUM_FILE_SIZE   = int(os.getenv("MAXIMUM_FILE_SIZE_MB", "25")) * 1024 * 1024
+LOG_FILE            = Path(os.getenv("LOG_FILE", "logs/paperless_sync.log"))
+CHECK_DIR           = Path(os.getenv("CHECK_DIR", "check"))
 
 # -----------------------------
 # ANSI COLORS

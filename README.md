@@ -23,21 +23,28 @@ pip install -r requirements.txt
 Or manually:
 
 ```
-pip install requests pypdf
+pip install requests pypdf python-dotenv cryptography
 ```
 
 ---
 
 ## Configuration
 
-Edit the constants near the top of `paperless_sync.py`:
+Copy `.env.example` to `.env` and fill in your values:
 
-| Constant | Description |
+```bash
+cp .env.example .env
+```
+
+| Variable | Description |
 |---|---|
 | `PAPERLESS_URL` | Base URL of your Paperless-ngx instance, e.g. `http://192.168.1.12:8000` |
 | `PAPERLESS_TOKEN` | API token from Paperless-ngx → Settings → API Tokens |
 | `CONSUME_DIR` | Local path to the mounted consume folder, e.g. `/Volumes/consume` |
-| `MAXIMUM_FILE_SIZE` | Max PDF size in bytes before a file is quarantined (default: 25 MB) |
+
+The maximum file size limit (default 25 MB) can be changed by editing `MAXIMUM_FILE_SIZE` at the top of `paperless_sync.py`.
+
+> **Never commit `.env`** — it is listed in `.gitignore` and contains your API token.
 
 ---
 
