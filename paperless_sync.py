@@ -1,11 +1,84 @@
 #!/usr/bin/env python3
+"""
+Paperless-ngx PDF Sync and Validation Tool.
+
+Scans directories for PDF files, validates them, checks for duplicates via the
+Paperless-ngx API, and stages new files in the consume folder for ingestion.
+
+Key Features:
+  - PDF validation (corruption, encryption, size limits)
+  - Duplicate detection via Paperless API checksum lookup
+  - Consume folder pre-check to avoid re-staging files
+  - Per-directory state tracking to skip unchanged directories
+  - Quarantine for invalid PDFs (oversized, corrupt, password-protected)
+
+Usage:
+  python paperless_sync.py [options] [scan_directory]
+
+  Examples:
+    python paperless_sync.py ~/Documents
+    python paperless_sync.py --verbose --dry-run /data/archive
+    python paperless_sync.py --force ~/Documents  # ignore saved state
+
+Inputs:
+  - CLI Arguments:
+      [scan_directory]  Root folder to scan (default: current directory)
+      -v, --verbose     Show detailed file information
+      -n, --dry-run     Scan without copying files
+      -f, --force       Ignore .paperless_check_state files, re-scan all
+      --no-state        Do not write or update .paperless_check_state files
+
+  - Environment Variables (from .env):
+      PAPERLESS_URL           Base URL of Paperless-ngx instance
+      PAPERLESS_TOKEN         API authentication token
+      CONSUME_DIR             Target folder for new documents
+      MAXIMUM_FILE_SIZE_MB    Max file size in MB (default: 25)
+      LOG_FILE                Log file path (default: logs/paperless_sync.log)
+      CHECK_DIR               Quarantine folder (default: check/)
+
+Outputs:
+  - Files:
+      {CONSUME_DIR}/*.pdf              Staged PDFs ready for ingestion
+      {CHECK_DIR}/*.pdf                Quarantined invalid PDFs
+      {LOG_FILE}                       Structured log of all operations
+      {scan_dir}/.paperless_check_state  Per-directory state cache (JSON)
+
+  - Exit Codes:
+      0   Success
+      1   Missing environment variables or critical errors
+
+  - State File Format (.paperless_check_state):
+      Written to each scanned directory after successful processing.
+      Skipped during --dry-run. Contains:
+      {
+        "last_checked": "<ISO-8601 timestamp>",
+        "pdf_count": <int>,
+        "dir_fingerprint": "<md5 hex string>"
+      }
+      Fingerprint is MD5 of sorted "filename:mtime_ns" entries for all PDFs.
+
+Dependencies:
+  - requests  (Paperless API communication)
+  - pypdf     (PDF validation)
+  - dotenv    (environment configuration)
+
+Operational Assumptions:
+  - Paperless API is reachable and token is valid
+  - Consume folder is mounted and writable
+  - MD5 checksums are unique per document
+  - File modification times are reliable for change detection
+  - State files are not manually edited
+"""
+
 import argparse
 import hashlib
+import json
 import os
 import re
 import requests
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -129,7 +202,7 @@ def consume_folder_writable():
     except OSError:
         return False
 
-def validate_pdf(path):
+def validate_pdf(path: Path) -> tuple[bool, str]:
     """
     Returns (is_valid: bool, reason: str).
     Checks file size, corruption, and password protection.
@@ -163,6 +236,73 @@ def validate_pdf(path):
 
     return True, "ok"
 
+def file_in_consume_folder(filename: str) -> bool:
+    """
+    Returns True if the file already exists in the consume folder.
+    Used to avoid re-staging files that are queued but not yet ingested.
+    """
+    return (CONSUME_DIR / filename).is_file()
+
+def compute_dir_fingerprint(directory: Path) -> str:
+    """
+    Compute MD5 fingerprint of all PDFs in a directory.
+    Fingerprint is based on sorted filename:mtime_ns pairs.
+    Returns MD5 hex digest.
+    """
+    pdfs = sorted(directory.glob("*.pdf"))
+    if not pdfs:
+        # Empty directory gets fingerprint of empty string
+        return hashlib.md5(b"").hexdigest()
+    
+    entries = [f"{p.name}:{p.stat().st_mtime_ns}" for p in pdfs]
+    fingerprint_str = "|".join(entries)
+    return hashlib.md5(fingerprint_str.encode("utf-8")).hexdigest()
+
+def read_dir_state(directory: Path) -> dict | None:
+    """
+    Read .paperless_check_state file from directory.
+    Returns dict with keys: last_checked, pdf_count, dir_fingerprint.
+    Returns None if file missing or invalid JSON.
+    """
+    state_file = directory / ".paperless_check_state"
+    if not state_file.exists():
+        return None
+    
+    try:
+        with state_file.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+def write_dir_state(directory: Path, fingerprint: str, pdf_count: int) -> None:
+    """
+    Write .paperless_check_state file to directory.
+    Does not raise on permission errors; logs warning instead.
+    """
+    state_file = directory / ".paperless_check_state"
+    state_data = {
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "pdf_count": pdf_count,
+        "dir_fingerprint": fingerprint
+    }
+    
+    try:
+        with state_file.open("w", encoding="utf-8") as f:
+            json.dump(state_data, f, indent=2)
+    except OSError as e:
+        log(f"[WARN] Could not write state file to {directory}: {e}")
+
+def dir_is_unchanged(directory: Path, current_fingerprint: str) -> bool:
+    """
+    Returns True if saved directory fingerprint matches current fingerprint.
+    """
+    state = read_dir_state(directory)
+    if state is None:
+        return False
+    
+    saved_fingerprint = state.get("dir_fingerprint")
+    return saved_fingerprint == current_fingerprint
+
 # -----------------------------
 # MAIN LOGIC
 # -----------------------------
@@ -184,10 +324,22 @@ def main():
         action="store_true",
         help="Scan and validate without copying any files",
     )
+    parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Ignore saved directory state and re-scan all directories",
+    )
+    parser.add_argument(
+        "--no-state",
+        action="store_true",
+        help="Do not write or update .paperless_check_state files",
+    )
     args = parser.parse_args()
     root_scan_dir = Path(args.root).resolve() if args.root else Path.cwd()
     verbose = args.verbose
     dry_run = args.dry_run
+    force = args.force
+    no_state = args.no_state
 
     # Ensure runtime directories exist
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +360,7 @@ def main():
     consume_write  = consume_exists and consume_folder_writable()
     api_ok         = paperless_api_ok()
     token_ok       = api_ok and paperless_token_ok()
+    state_enabled  = not (force or no_state)
 
     def status_line(label, value, good, good_msg, bad_msg):
         badge = ok("  OK  ") if good else err(" FAIL ")
@@ -219,6 +372,19 @@ def main():
     status_line("Consume folder", CONSUME_DIR,    consume_write,  "mounted & writable","not writable / not mounted")
     status_line("Paperless API",  PAPERLESS_URL,  api_ok,         "reachable",        "unreachable")
     status_line("API token",      "•••••••••",    token_ok,       "valid",            "invalid" if api_ok else "skipped")
+    
+    # State tracking status
+    if force:
+        state_value = "disabled"
+        state_msg = "disabled (--force)"
+    elif no_state:
+        state_value = "disabled"
+        state_msg = "disabled (--no-state)"
+    else:
+        state_value = "enabled"
+        state_msg = "active"
+    status_line("State tracking", state_value, state_enabled, "active", state_msg)
+    
     print(bold(f"{'─'*54}\n"))
 
     status_log = (
@@ -250,25 +416,38 @@ def main():
         return
 
     # ------------------------------------------------------------------
-    # Pre-count PDFs
+    # Collect directories containing PDFs
     # ------------------------------------------------------------------
-    print(info(f"  Counting PDFs in {root_scan_dir} ..."), end="", flush=True)
-    all_pdfs = sorted(root_scan_dir.rglob("*.pdf"))
+    print(info(f"  Scanning for PDFs in {root_scan_dir} ..."), end="", flush=True)
+    all_pdfs = list(root_scan_dir.rglob("*.pdf"))
     pdf_total = len(all_pdfs)
-    print(f"\r  {bold(str(pdf_total))} PDF{'s' if pdf_total != 1 else ''} found in {dim(str(root_scan_dir))}")
-    log(f"[INFO] {pdf_total} PDFs found in {root_scan_dir}")
+    
+    # Group PDFs by parent directory
+    dirs_with_pdfs = {}
+    for pdf_path in all_pdfs:
+        parent = pdf_path.parent
+        if parent not in dirs_with_pdfs:
+            dirs_with_pdfs[parent] = []
+        dirs_with_pdfs[parent].append(pdf_path)
+    
+    # Sort directories for deterministic output
+    sorted_dirs = sorted(dirs_with_pdfs.keys())
+    
+    print(f"\r  {bold(str(pdf_total))} PDF{'s' if pdf_total != 1 else ''} found in {bold(str(len(sorted_dirs)))} director{'ies' if len(sorted_dirs) != 1 else 'y'} under {dim(str(root_scan_dir))}")
+    log(f"[INFO] {pdf_total} PDFs found in {len(sorted_dirs)} directories under {root_scan_dir}")
 
     if pdf_total == 0:
         print(warn("  No PDFs to process."))
         return
 
     # ------------------------------------------------------------------
-    # Scan for PDFs
+    # Process directories
     # ------------------------------------------------------------------
-    total_docs      = 0
-    total_skipped   = 0
-    total_added     = 0
-    total_quarantine = 0
+    total_docs          = 0
+    total_skipped       = 0
+    total_added         = 0
+    total_quarantine    = 0
+    total_dirs_skipped  = 0
 
     def progress(n):
         pct = int(n / pdf_total * 100)
@@ -279,68 +458,109 @@ def main():
         print(f"  {'':<{pad}}  {'FILE':<43} {'SIZE':>8}  {'MD5 HASH':<34}  STATUS")
         print(f"  {'':<{pad}}  {'-'*43} {'-'*8}  {'-'*34}  {'------'}")
 
-    for full_path in all_pdfs:
-        filename = full_path.name
-        total_docs += 1
-        size_mb = full_path.stat().st_size / 1024 / 1024
-        prog = progress(total_docs)
+    for directory in sorted_dirs:
+        pdfs_in_dir = sorted(dirs_with_pdfs[directory])
+        current_fingerprint = compute_dir_fingerprint(directory)
+        
+        # Check if directory is unchanged since last scan
+        if not force and dir_is_unchanged(directory, current_fingerprint):
+            state = read_dir_state(directory)
+            last_checked = state.get("last_checked", "unknown") if state else "unknown"
+            actual_count = len(pdfs_in_dir)
+            
+            log(f"[SKIP-DIR] Unchanged since last check: {directory}")
+            if verbose:
+                print(f"  {dim(f'[skip-dir] {directory.relative_to(root_scan_dir)} ({actual_count} PDFs, last checked: {last_checked})')}")
+            else:
+                print(dim(f"  [skip-dir] {directory.relative_to(root_scan_dir)} ({actual_count} PDFs)"))
+            
+            total_skipped += actual_count
+            total_dirs_skipped += 1
+            continue
+        
+        # Process each PDF in this directory
+        for full_path in pdfs_in_dir:
+            filename = full_path.name
+            total_docs += 1
+            size_mb = full_path.stat().st_size / 1024 / 1024
+            prog = progress(total_docs)
 
-        # --- PDF validation ---
-        is_valid, reason = validate_pdf(full_path)
-        if not is_valid:
+            # --- PDF validation ---
+            is_valid, reason = validate_pdf(full_path)
+            if not is_valid:
+                if not dry_run:
+                    quarantine_dest = CHECK_DIR / filename
+                    shutil.copy(full_path, quarantine_dest)
+                action = dim("(would quarantine)") if dry_run else ""
+                log(f"[QUARANTINE{'|DRY' if dry_run else ''}] {filename}  reason={reason}")
+                if verbose:
+                    print(f"  {prog}  {warn(filename):<43} {size_mb:>7.2f}M  {dim('—'):34}  {warn(reason)} → check/ {action}")
+                else:
+                    to = f" → check/ {action}" if not dry_run else f" {action}"
+                    print(f"{prog} " + warn(f"[!] {filename}  ({reason}){to}"))
+                total_quarantine += 1
+                total_skipped += 1
+                continue
+
+            file_hash = md5sum(full_path)
+            log(f"[CHECK] {full_path}  md5={file_hash}  size={size_mb:.2f}MB")
+
+            # Check if file is already staged in consume folder
+            if file_in_consume_folder(filename):
+                log(f"[SKIP] Already staged in consume folder: {filename}")
+                if verbose:
+                    print(f"  {prog}  {dim(filename):<43} {size_mb:>7.2f}M  {dim(file_hash)}  {dim('already staged')}")
+                else:
+                    print(f"{prog} " + dim(f"[skip] {filename}  (already in consume folder)"))
+                total_skipped += 1
+                continue
+
+            exists, _ = paperless_document_exists(file_hash)
+
+            if exists:
+                log(f"[SKIP] Duplicate in Paperless: {filename}")
+                if verbose:
+                    print(f"  {prog}  {dim(filename):<43} {size_mb:>7.2f}M  {dim(file_hash)}  {dim('duplicate')}")
+                else:
+                    print(f"{prog} " + dim(f"[skip] {filename}"))
+                total_skipped += 1
+                continue
+
             if not dry_run:
-                quarantine_dest = CHECK_DIR / filename
-                shutil.copy(full_path, quarantine_dest)
-            action = dim("(would quarantine)") if dry_run else ""
-            log(f"[QUARANTINE{'|DRY' if dry_run else ''}] {filename}  reason={reason}")
+                dest = CONSUME_DIR / filename
+                shutil.copy(full_path, dest)
+            log(f"[INGEST{'|DRY' if dry_run else ''}] {'Would add' if dry_run else 'Added'}: {filename}")
+
             if verbose:
-                print(f"  {prog}  {warn(filename):<43} {size_mb:>7.2f}M  {dim('—'):34}  {warn(reason)} → check/ {action}")
+                status = ok(C.BOLD + ('WOULD ADD' if dry_run else 'ADDED') + C.RESET)
+                print(f"  {prog}  {ok(C.BOLD + '+' + C.RESET + C.GREEN + ' ' + filename):<52} {size_mb:>7.2f}M  {ok(file_hash)}  {status}")
             else:
-                to = f" → check/ {action}" if not dry_run else f" {action}"
-                print(f"{prog} " + warn(f"[!] {filename}  ({reason}){to}"))
-            total_quarantine += 1
-            total_skipped += 1
-            continue
+                label = "[~]" if dry_run else "[+]"
+                print(f"{prog} " + ok(f"{label} {filename}  ({size_mb:.2f} MB)"))
 
-        file_hash = md5sum(full_path)
-        log(f"[CHECK] {full_path}  md5={file_hash}  size={size_mb:.2f}MB")
-
-        exists, _ = paperless_document_exists(file_hash)
-
-        if exists:
-            log(f"[SKIP] Duplicate in Paperless: {filename}")
-            if verbose:
-                print(f"  {prog}  {dim(filename):<43} {size_mb:>7.2f}M  {dim(file_hash)}  {dim('duplicate')}")
-            else:
-                print(f"{prog} " + dim(f"[skip] {filename}"))
-            total_skipped += 1
-            continue
-
-        if not dry_run:
-            dest = CONSUME_DIR / filename
-            shutil.copy(full_path, dest)
-        log(f"[INGEST{'|DRY' if dry_run else ''}] {'Would add' if dry_run else 'Added'}: {filename}")
-
-        if verbose:
-            status = ok(C.BOLD + ('WOULD ADD' if dry_run else 'ADDED') + C.RESET)
-            print(f"  {prog}  {ok(C.BOLD + '+' + C.RESET + C.GREEN + ' ' + filename):<52} {size_mb:>7.2f}M  {ok(file_hash)}  {status}")
-        else:
-            label = "[~]" if dry_run else "[+]"
-            print(f"{prog} " + ok(f"{label} {filename}  ({size_mb:.2f} MB)"))
-
-        total_added += 1
+            total_added += 1
+        
+        # Write directory state after processing all files in this directory
+        if not dry_run and not no_state:
+            write_dir_state(directory, current_fingerprint, len(pdfs_in_dir))
 
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
+    # Show completion message if we scanned fewer files than total
+    if total_docs < pdf_total:
+        remaining = pdf_total - total_docs
+        print(f"\n{info(f'  Remaining {remaining} PDFs were in {total_dirs_skipped} unchanged directories (skipped)')}")
+    
     print(bold(f"\n{'─'*54}"))
-    print(f"  {info('PDFs scanned:  ')}  {bold(str(total_docs))}")
-    print(f"  {warn('Skipped:       ')}  {bold(str(total_skipped))}")
-    print(f"  {warn('→ quarantined: ')}  {bold(str(total_quarantine))} {dim('(check/ folder)')}")
-    print(f"  {ok(  'Added:         ')}  {bold(str(total_added))}")
+    print(f"  {info('PDFs scanned:      ')}  {bold(str(total_docs))}")
+    print(f"  {info('Dirs skipped:      ')}  {bold(str(total_dirs_skipped))} {dim('(unchanged)')}")
+    print(f"  {warn('Files skipped:     ')}  {bold(str(total_skipped))}")
+    print(f"  {warn('→ quarantined:     ')}  {bold(str(total_quarantine))} {dim('(check/ folder)')}")
+    print(f"  {ok(  'Added:             ')}  {bold(str(total_added))}")
     print(bold(f"{'─'*54}\n"))
 
-    log(f"Summary — scanned:{total_docs}  skipped:{total_skipped}  quarantined:{total_quarantine}  added:{total_added}")
+    log(f"Summary — scanned:{total_docs}  dirs_skipped:{total_dirs_skipped}  files_skipped:{total_skipped}  quarantined:{total_quarantine}  added:{total_added}")
     log("=== Sync Complete ===")
 
 if __name__ == "__main__":
