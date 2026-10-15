@@ -1,50 +1,158 @@
-<<<<<<< HEAD
 # paperless-utilities
-Tools to clean-up local directories before ingestion into Paperless-NGX
-=======
-# paperless-scripts
 
-A command-line tool that scans a folder for PDF files and ingests new ones into [Paperless-ngx](https://docs.paperless-ngx.com/) via its consume folder. Duplicate detection uses the Paperless API to avoid re-ingesting files that already exist in the archive.
+Tools to scan, validate, and sync PDF files to Paperless-ngx with intelligent duplicate detection and directory state tracking.
 
----
+## Features
+
+- **PDF Validation** - Detects corrupt, oversized, and password-protected files
+- **Duplicate Detection** - Checks Paperless API via MD5 checksums to avoid re-ingestion
+- **Consume Folder Pre-check** - Skips files already staged but not yet ingested
+- **Directory State Tracking** - Remembers which folders have been scanned to avoid redundant processing
+- **Quarantine System** - Invalid PDFs moved to check folder for review
+- **Progress Tracking** - Real-time console output with file counts and percentages
+- **Dry-run Mode** - Test without making any changes
+
+## Quick Start
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/cyberthreatgurl/paperless-utilities.git
+cd paperless-utilities
+
+# Install as a global command
+pip install .
+```
+
+### Configuration
+
+```bash
+# Copy example config
+cp .env.example .env
+
+# Edit with your values
+nano .env
+```
+
+Required settings:
+- `PAPERLESS_URL` - Your Paperless-ngx URL (e.g., http://localhost:8000)
+- `PAPERLESS_TOKEN` - API token from Paperless → Settings → API Tokens  
+- `CONSUME_DIR` - Path to Paperless consume folder (e.g., /mnt/consume)
+
+### Usage
+
+```bash
+# Sync PDFs from a directory
+paperless-sync ~/Documents
+
+# Dry-run to see what would happen
+paperless-sync --dry-run ~/Documents
+
+# Mark directories as already processed (skip on future runs)
+paperless-mark-scanned ~/Documents
+
+# Force re-scan ignoring saved state
+paperless-sync --force ~/Documents
+
+# Show detailed progress
+paperless-sync --verbose ~/Documents
+```
 
 ## Requirements
 
-- Python 3.10+
-- Paperless-ngx instance reachable over the network
-- Consume folder mounted locally (e.g. via Samba/SMB)
+- Python 3.10 or higher
+- Paperless-ngx instance (reachable over network)
+- Consume folder mounted locally (Samba/NFS/local filesystem)
 
-### Python dependencies
+## Documentation
+
+- **[Installation Guide](INSTALL.md)** - Detailed installation options including standalone executables
+- **[Module Docstrings](paperless_sync.py)** - Technical documentation in code
+
+## How It Works
+
+1. **Scan Phase** - Recursively finds all PDFs under the specified root directory
+2. **State Check** - Reads `.paperless_check_state` files to skip unchanged directories  
+3. **Validation** - Checks each PDF for corruption, encryption, and size limits
+4. **Duplicate Detection** - Queries Paperless API by MD5 checksum
+5. **Consume Check** - Verifies file isn't already in consume folder waiting for ingestion
+6. **Copy Phase** - Stages new valid PDFs to consume folder
+7. **State Recording** - Writes state files to skip unchanged directories on next run
+
+Invalid PDFs are quarantined to the `check/` folder for manual review.
+
+## Command Reference
+
+### paperless-sync
 
 ```
-pip install -r requirements.txt
+Usage: paperless-sync [options] [directory]
+
+Options:
+  -v, --verbose     Show detailed file information (MD5, size)
+  -n, --dry-run     Scan without copying files
+  -f, --force       Ignore saved state, re-scan all directories
+  --no-state        Don't write .paperless_check_state files
+
+Arguments:
+  directory         Root folder to scan (default: current directory)
 ```
 
-Or manually:
+### paperless-mark-scanned
 
 ```
-pip install requests pypdf python-dotenv cryptography
+Usage: paperless-mark-scanned <directory>
+
+Recursively marks all subdirectories containing PDFs as already scanned
+by creating .paperless_check_state files. Use this to skip directories
+on future paperless-sync runs.
 ```
 
----
+## State Files
 
-## Configuration
+`.paperless_check_state` files are created in each processed directory:
 
-Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-cp .env.example .env
+```json
+{
+  "last_checked": "2026-04-09T19:45:24.572471+00:00",
+  "pdf_count": 16,
+  "dir_fingerprint": "26bcb101fc814bbfe0e79e6e95efc690"
+}
 ```
 
-| Variable | Description |
-|---|---|
-| `PAPERLESS_URL` | Base URL of your Paperless-ngx instance, e.g. `http://192.168.1.12:8000` |
-| `PAPERLESS_TOKEN` | API token from Paperless-ngx → Settings → API Tokens |
-| `CONSUME_DIR` | Local path to the mounted consume folder, e.g. `/Volumes/consume` |
+The fingerprint is an MD5 hash of all PDF filenames and modification times. If any PDF in the directory changes, the fingerprint changes and the directory is re-scanned.
 
-The maximum file size limit (default 25 MB) can be changed by editing `MAXIMUM_FILE_SIZE` at the top of `paperless_sync.py`.
+## Environment Variables
 
-> **Never commit `.env`** — it is listed in `.gitignore` and contains your API token.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PAPERLESS_URL` | Paperless-ngx base URL | *Required* |
+| `PAPERLESS_TOKEN` | API authentication token | *Required* |
+| `CONSUME_DIR` | Consume folder path | *Required* |
+| `MAXIMUM_FILE_SIZE_MB` | Max PDF size in MB | 25 |
+| `LOG_FILE` | Log file path | logs/paperless_sync.log |
+| `CHECK_DIR` | Quarantine folder | check/ |
+
+## Exit Codes
+
+- `0` - Success
+- `1` - Missing required environment variables or critical errors
+
+## Security
+
+- **Never commit `.env`** - Contains your API token (already in .gitignore)
+- API tokens should be read-only if possible
+- Use environment variables instead of hardcoded credentials
+- Validate all file paths to prevent directory traversal
+
+## Contributing
+
+See [.github/copilot-instructions.md](.github/copilot-instructions.md) for coding standards.
+
+## License
+
+MIT License - See LICENSE file for details
 
 ---
 

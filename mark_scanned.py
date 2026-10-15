@@ -126,3 +126,13 @@ if __name__ == "__main__":
         sys.exit(1)
     
     mark_tree_scanned(sys.argv[1])
+
+def mark_tree_scanned_cli():
+    """CLI entry point for use with setuptools console_scripts."""
+    if len(sys.argv) != 2:
+        print("Usage: paperless-mark-scanned <directory>")
+        print("\nMarks all subdirectories containing PDFs as already scanned.")
+        print("This allows paperless-sync to skip unchanged directories.")
+        sys.exit(1)
+    
+    mark_tree_scanned(sys.argv[1])
