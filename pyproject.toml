@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "PDF sync and validation utilities for Paperless-ngx"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-only"}
 authors = [
     {name = "paperless-utilities contributors"}
 ]
@@ -32,6 +32,10 @@ dependencies = [
 [project.scripts]
 paperless-sync = "paperless_sync:main"
 paperless-mark-scanned = "mark_scanned:mark_tree_scanned_cli"
+
+[tool.setuptools]
+py-modules = ["paperless_sync", "mark_scanned"]
+script-files = ["import_pdfs.sh", "pre-consume.sh"]
 
 [project.urls]
 Homepage = "https://github.com/cyberthreatgurl/paperless-utilities"

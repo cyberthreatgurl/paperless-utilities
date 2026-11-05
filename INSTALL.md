@@ -7,6 +7,7 @@ This guide covers different ways to install and use the Paperless utilities.
 - Python 3.10 or higher
 - pip (Python package installer)
 - A running Paperless-ngx instance
+- For the pre-consume hook: `poppler`, `ocrmypdf`, and `tesseract`
 
 ## Installation Methods
 
@@ -58,6 +59,9 @@ paperless-sync ~/Documents
 
 # Mark directories as already scanned
 paperless-mark-scanned ~/Documents
+
+# Import an archive into the consume folder
+./import_pdfs.sh ~/Documents/archive /path/to/consume
 
 # Show help
 paperless-sync --help
@@ -154,6 +158,12 @@ Make sure you're in the project directory with `requirements.txt`, or install ma
 ```bash
 pip install requests pypdf python-dotenv
 ```
+
+The pre-consume hook uses system tools rather than Python packages. On macOS,
+install them with `brew install poppler tesseract ocrmypdf jbig2enc pngquant`.
+
+The shell tools are installed by `pip install .` and are also available directly
+from the repository as `./import_pdfs.sh` and `./pre-consume.sh`.
 
 ## Configuration Files
 

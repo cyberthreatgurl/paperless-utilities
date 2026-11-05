@@ -11,6 +11,8 @@ Tools to scan, validate, and sync PDF files to Paperless-ngx with intelligent du
 - **Quarantine System** - Invalid PDFs moved to check folder for review
 - **Progress Tracking** - Real-time console output with file counts and percentages
 - **Dry-run Mode** - Test without making any changes
+- **PDF Importer** - Copy PDF archives into the consume folder with duplicate handling
+- **Pre-consume Hook** - Validate, flatten, and OCR incoming PDFs
 
 ## Quick Start
 
@@ -64,6 +66,31 @@ paperless-sync --verbose ~/Documents
 - Python 3.10 or higher
 - Paperless-ngx instance (reachable over network)
 - Consume folder mounted locally (Samba/NFS/local filesystem)
+
+The pre-consume hook additionally requires `poppler` (`pdfinfo` and `pdftocairo`),
+`ocrmypdf`, and `tesseract`. On macOS, install them with:
+
+```bash
+brew install poppler tesseract ocrmypdf jbig2enc pngquant
+```
+
+## Pre-consume Tools
+
+`pre-consume.sh` is intended to be configured as Paperless-ngx's pre-consume
+hook. It checks for a stable, valid PDF, flattens AcroForms when detected, runs
+OCRmyPDF, and replaces the input contents only after successful output
+validation. Configure `PRECONSUME_QUARANTINE_DIR`, `PRECONSUME_ORIGINALS_DIR`,
+`PRECONSUME_LOG_FILE`, and `PRECONSUME_DEBUG_LOG` to change its output paths.
+
+To recursively copy a PDF archive into an existing consume folder:
+
+```bash
+import_pdfs.sh /path/to/archive /path/to/consume
+```
+
+Identical files with the same name are skipped; different files with that name
+are staged under a suffixed filename. The copy is completed in a temporary file
+before it is moved into the consume folder.
 
 ## Documentation
 
@@ -152,7 +179,7 @@ See [.github/copilot-instructions.md](.github/copilot-instructions.md) for codin
 
 ## License
 
-MIT License - See LICENSE file for details
+GPL-3.0-only - See LICENSE file for details
 
 ---
 
