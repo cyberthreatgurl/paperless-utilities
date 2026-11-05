@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Paperless pre-consume hook for stable-size checks, form flattening, and OCR.
 
-FILE="${1:-}"
+FILE="${DOCUMENT_WORKING_PATH:-${1:-}}"
 if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
   echo "PRECONSUME_QUARANTINE missing-file"
   exit 1
@@ -15,6 +15,9 @@ QUARANTINE_DIR="${PRECONSUME_QUARANTINE_DIR:-/usr/src/paperless/export/.quaranti
 ORIGINALS_DIR="${PRECONSUME_ORIGINALS_DIR:-/usr/src/paperless/export/originals}"
 LOG_FILE="${PRECONSUME_LOG_FILE:-/usr/src/paperless/export/preconsume.log}"
 DEBUG_LOG="${PRECONSUME_DEBUG_LOG:-/usr/src/paperless/export/preconsume-debug.log}"
+LOG_DATE="$(date +%F)"
+LOG_FILE="${LOG_FILE%.log}-${LOG_DATE}.log"
+DEBUG_LOG="${DEBUG_LOG%.log}-${LOG_DATE}.log"
 
 mkdir -p "$QUARANTINE_DIR" "$ORIGINALS_DIR"
 touch "$LOG_FILE" "$DEBUG_LOG"
@@ -36,11 +39,18 @@ debug() { echo "[$(timestamp)] $1: $FILENAME - $2" >> "$DEBUG_LOG"; }
 
 quarantine_and_exit() {
   local reason="$1"
-  local destination="$QUARANTINE_DIR/${FILENAME%.pdf}.invalid.pdf"
+  local classification="${2:-invalid}"
+  local base="${FILENAME%.*}"
+  local destination="$QUARANTINE_DIR/${base}.${classification}.pdf"
+  local suffix=1
+  while [ -e "$destination" ]; do
+    destination="$QUARANTINE_DIR/${base}.${classification}.${suffix}.pdf"
+    suffix=$((suffix + 1))
+  done
   cp "$FILE" "$destination" 2>/dev/null || true
   echo "PRECONSUME_QUARANTINE $FILENAME"
-  log "QUARANTINE" "$reason"
-  debug "QUARANTINE" "$reason"
+  log "QUARANTINE" "$reason (saved as ${destination##*/})"
+  debug "QUARANTINE" "$reason (saved as ${destination##*/})"
   exit 1
 }
 
@@ -81,6 +91,10 @@ fi
 
 if ! head -c 1024 "$FILE" | grep "%PDF-" >/dev/null; then
   quarantine_and_exit "missing %PDF- header"
+fi
+
+if pdfinfo "$FILE" 2>/dev/null | grep '^Encrypted:[[:space:]]*yes' >/dev/null; then
+  quarantine_and_exit "encrypted PDF" "enc"
 fi
 
 cp "$FILE" "$ORIGINALS_DIR/$FILENAME" 2>/dev/null || true
@@ -124,6 +138,10 @@ case "$OCR_EXIT" in
   10) OCR_REASON="PDF/A conversion failed" ;;
   *) OCR_REASON="unrecognized exit code $OCR_EXIT" ;;
 esac
+
+if [ "$OCR_EXIT" -eq 8 ]; then
+  quarantine_and_exit "encrypted PDF" "enc"
+fi
 
 if [ "$OCR_EXIT" -ne 0 ]; then
   if { [ "$OCR_EXIT" -eq 2 ] || [ "$OCR_EXIT" -eq 6 ] || [ "$OCR_EXIT" -eq 15 ]; } && [ -s "$TMP_OUT" ]; then

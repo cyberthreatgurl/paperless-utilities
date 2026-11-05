@@ -81,6 +81,10 @@ hook. It checks for a stable, valid PDF, flattens AcroForms when detected, runs
 OCRmyPDF, and replaces the input contents only after successful output
 validation. Configure `PRECONSUME_QUARANTINE_DIR`, `PRECONSUME_ORIGINALS_DIR`,
 `PRECONSUME_LOG_FILE`, and `PRECONSUME_DEBUG_LOG` to change its output paths.
+It creates separate `preconsume-YYYY-MM-DD.log` and
+`preconsume-debug-YYYY-MM-DD.log` files for each local calendar day.
+Encrypted PDFs are quarantined as `filename.enc.pdf` and reported as failed
+consumption so they can be handled separately.
 
 To recursively copy a PDF archive into an existing consume folder:
 
