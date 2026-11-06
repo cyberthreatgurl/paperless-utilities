@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "PDF sync and validation utilities for Paperless-ngx"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "GPL-3.0-only"}
+license = "GPL-3.0-only"
 authors = [
     {name = "paperless-utilities contributors"}
 ]
@@ -16,7 +16,6 @@ keywords = ["paperless", "pdf", "document-management", "automation"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -32,9 +31,10 @@ dependencies = [
 [project.scripts]
 paperless-sync = "paperless_sync:main"
 paperless-mark-scanned = "mark_scanned:mark_tree_scanned_cli"
+paperless-reconcile = "paperless_reconcile:main"
 
 [tool.setuptools]
-py-modules = ["paperless_sync", "mark_scanned"]
+py-modules = ["paperless_sync", "mark_scanned", "paperless_reconcile"]
 script-files = ["import_pdfs.sh", "pre-consume.sh"]
 
 [project.urls]

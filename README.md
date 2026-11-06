@@ -83,8 +83,11 @@ validation. Configure `PRECONSUME_QUARANTINE_DIR`, `PRECONSUME_ORIGINALS_DIR`,
 `PRECONSUME_LOG_FILE`, and `PRECONSUME_DEBUG_LOG` to change its output paths.
 It creates separate `preconsume-YYYY-MM-DD.log` and
 `preconsume-debug-YYYY-MM-DD.log` files for each local calendar day.
-Encrypted PDFs are quarantined as `filename.enc.pdf` and reported as failed
-consumption so they can be handled separately.
+Encrypted PDFs are moved out of the watched source path into
+`password_protected_pdfs/filename.enc.pdf` and reported as failed consumption.
+Numbered suffixes are used if a destination already exists. In Docker, the hook
+uses `/usr/src/paperless/export/password_protected_pdfs`, which should map to
+the host path configured by `PASSWORD_PROTECTED_PDFS_DIR` in `.env`.
 
 To recursively copy a PDF archive into an existing consume folder:
 
@@ -95,6 +98,23 @@ import_pdfs.sh /path/to/archive /path/to/consume
 Identical files with the same name are skipped; different files with that name
 are staged under a suffixed filename. The copy is completed in a temporary file
 before it is moved into the consume folder.
+
+Generate a read-only reconciliation report for PDFs in the consume and
+pre-consume quarantine folders:
+
+```bash
+paperless-reconcile
+```
+
+The command writes a CSV under `logs/` and prints grouped counts. It checks
+Paperless using exact SHA-256 matches and correlates task history with saved
+pre-OCR originals. By default it is read-only. Use `--apply` to move confirmed
+ingests to `export/already_ingested/`, hook failures to quarantine, encrypted
+files to `PASSWORD_PROTECTED_PDFS_DIR`, and AppleDouble sidecars to
+`export/appledouble_sidecars/`. Add `--retry-unmatched` with `--apply` to
+retrigger consume files that have no exact Paperless match or recorded hook
+failure. The action is recorded in the CSV. Use `--no-api` for a local-only
+report, or `--output /path/to/report.csv` to choose the CSV path.
 
 ## Documentation
 

@@ -13,6 +13,7 @@ FILE="$(cd "$(dirname "$FILE")" && pwd -P)/$(basename "$FILE")"
 FILENAME="$(basename "$FILE")"
 QUARANTINE_DIR="${PRECONSUME_QUARANTINE_DIR:-/usr/src/paperless/export/.quarantine}"
 ORIGINALS_DIR="${PRECONSUME_ORIGINALS_DIR:-/usr/src/paperless/export/originals}"
+PASSWORD_PROTECTED_PDFS_DIR="${PRECONSUME_PASSWORD_PROTECTED_DIR:-/usr/src/paperless/export/password_protected_pdfs}"
 LOG_FILE="${PRECONSUME_LOG_FILE:-/usr/src/paperless/export/preconsume.log}"
 DEBUG_LOG="${PRECONSUME_DEBUG_LOG:-/usr/src/paperless/export/preconsume-debug.log}"
 LOG_DATE="$(date +%F)"
@@ -51,6 +52,37 @@ quarantine_and_exit() {
   echo "PRECONSUME_QUARANTINE $FILENAME"
   log "QUARANTINE" "$reason (saved as ${destination##*/})"
   debug "QUARANTINE" "$reason (saved as ${destination##*/})"
+  exit 1
+}
+
+move_encrypted_and_exit() {
+  local reason="$1"
+  local source_file="${DOCUMENT_SOURCE_PATH:-$FILE}"
+  local base="${FILENAME%.*}"
+  local destination="$PASSWORD_PROTECTED_PDFS_DIR/${base}.enc.pdf"
+  local suffix=1
+
+  if ! mkdir -p "$PASSWORD_PROTECTED_PDFS_DIR"; then
+    echo "PRECONSUME_QUARANTINE $FILENAME"
+    log "ERROR" "$reason; could not create $PASSWORD_PROTECTED_PDFS_DIR"
+    debug "ERROR" "$reason; could not create $PASSWORD_PROTECTED_PDFS_DIR"
+    exit 1
+  fi
+  while [ -e "$destination" ]; do
+    destination="$PASSWORD_PROTECTED_PDFS_DIR/${base}.enc.${suffix}.pdf"
+    suffix=$((suffix + 1))
+  done
+
+  if [ ! -f "$source_file" ] || ! mv "$source_file" "$destination"; then
+    echo "PRECONSUME_QUARANTINE $FILENAME"
+    log "ERROR" "$reason; could not move source file to $destination"
+    debug "ERROR" "$reason; could not move source file to $destination"
+    exit 1
+  fi
+
+  echo "PRECONSUME_QUARANTINE $FILENAME"
+  log "QUARANTINE" "$reason; moved source to ${destination##*/}"
+  debug "QUARANTINE" "$reason; moved source to ${destination##*/}"
   exit 1
 }
 
@@ -94,7 +126,7 @@ if ! head -c 1024 "$FILE" | grep "%PDF-" >/dev/null; then
 fi
 
 if pdfinfo "$FILE" 2>/dev/null | grep '^Encrypted:[[:space:]]*yes' >/dev/null; then
-  quarantine_and_exit "encrypted PDF" "enc"
+  move_encrypted_and_exit "encrypted PDF"
 fi
 
 cp "$FILE" "$ORIGINALS_DIR/$FILENAME" 2>/dev/null || true
@@ -140,7 +172,7 @@ case "$OCR_EXIT" in
 esac
 
 if [ "$OCR_EXIT" -eq 8 ]; then
-  quarantine_and_exit "encrypted PDF" "enc"
+  move_encrypted_and_exit "encrypted PDF"
 fi
 
 if [ "$OCR_EXIT" -ne 0 ]; then

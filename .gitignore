@@ -3,3 +3,4 @@ venv/
 check/
 logs/
 .env
+__pycache__/
