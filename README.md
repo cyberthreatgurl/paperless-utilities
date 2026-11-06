@@ -79,6 +79,11 @@ The pre-consume hook additionally requires `poppler` (`pdfinfo` and `pdftocairo`
 brew install poppler tesseract ocrmypdf jbig2enc pngquant
 ```
 
+`import_pdfs.sh` also imports `.doc` and `.docx` files by converting them with
+LibreOffice's `soffice` command before placing the generated PDFs in consume.
+Install LibreOffice on macOS with `brew install --cask libreoffice` and ensure
+`soffice` is available on `PATH`.
+
 ## Pre-consume Tools
 
 `pre-consume.sh` is intended to be configured as Paperless-ngx's pre-consume
@@ -95,15 +100,16 @@ Numbered suffixes are used if a destination already exists. In Docker, the hook
 uses `/usr/src/paperless/export/password_protected_pdfs`, which should map to
 the host path configured by `PASSWORD_PROTECTED_PDFS_DIR` in `.env`.
 
-To recursively copy a PDF archive into an existing consume folder:
+To recursively import PDFs and Word documents into an existing consume folder:
 
 ```bash
 import_pdfs.sh /path/to/archive /path/to/consume
 ```
 
-Identical files with the same name are skipped; different files with that name
-are staged under a suffixed filename. The copy is completed in a temporary file
-before it is moved into the consume folder.
+Word files are converted to PDFs in a temporary directory; source files remain
+unchanged. Identical PDFs with the same name are skipped, and different files
+with that name are staged under a suffixed filename. Files are copied to a
+temporary file before being moved into the consume folder.
 
 Generate a read-only reconciliation report for PDFs in the consume and
 pre-consume quarantine folders:

@@ -7,6 +7,7 @@ This guide covers different ways to install and use the Paperless utilities.
 - Python 3.10 or higher
 - pip (Python package installer)
 - A running Paperless-ngx instance
+- LibreOffice (`soffice`) to import `.doc` and `.docx` files
 - For the pre-consume hook: `poppler`, `ocrmypdf`, and `tesseract`
 
 ## Installation Methods
@@ -171,6 +172,9 @@ install them with `brew install poppler tesseract ocrmypdf jbig2enc pngquant`.
 
 The shell tools are installed by `pip install .` and are also available directly
 from the repository as `./import_pdfs.sh` and `./pre-consume.sh`.
+The importer requires LibreOffice's `soffice` executable only when the source
+archive contains `.doc` or `.docx` files. On macOS, install it with
+`brew install --cask libreoffice`.
 
 ## Configuration Files
 
