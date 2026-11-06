@@ -116,6 +116,10 @@ retrigger consume files that have no exact Paperless match or recorded hook
 failure. The action is recorded in the CSV. Use `--no-api` for a local-only
 report, or `--output /path/to/report.csv` to choose the CSV path.
 
+The Python sync tools and shell importer ignore macOS `._*` AppleDouble
+sidecars. `paperless-sync` stages file bytes without copying extended
+attributes, which helps avoid creating new sidecars on SMB consume mounts.
+
 ## Documentation
 
 - **[Installation Guide](INSTALL.md)** - Detailed installation options including standalone executables

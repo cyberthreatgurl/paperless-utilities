@@ -19,6 +19,7 @@ Usage:
     python paperless_sync.py ~/Documents
     python paperless_sync.py --verbose --dry-run /data/archive
     python paperless_sync.py --force ~/Documents  # ignore saved state
+    paperless-sync --clean-consume --dry-run
 
 Inputs:
   - CLI Arguments:
@@ -27,6 +28,8 @@ Inputs:
       -n, --dry-run     Scan without copying files
       -f, --force       Ignore .paperless_check_state files, re-scan all
       --no-state        Do not write or update .paperless_check_state files
+    --clean-consume   Quarantine invalid PDFs already in the consume folder
+    --clean-consume   Quarantine invalid PDFs already in the consume folder
 
   - Environment Variables (from .env):
       PAPERLESS_URL           Base URL of Paperless-ngx instance
@@ -84,6 +87,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import pypdf
 from pypdf.errors import DependencyError, FileNotDecryptedError, PyPdfError, WrongPasswordError
+from paperless_file_utils import copy_file_data_atomic, is_appledouble_file
 
 load_dotenv()
 
@@ -211,6 +215,10 @@ def validate_pdf(path: Path) -> tuple[bool, str]:
         size_mb = path.stat().st_size / 1024 / 1024
         return False, f"oversized ({size_mb:.2f} MB)"
 
+    with path.open("rb") as pdf_file:
+        if b"%PDF-" not in pdf_file.read(1024):
+            return False, "corrupt"
+
     try:
         reader = pypdf.PdfReader(str(path))
     except PyPdfError:
@@ -236,6 +244,50 @@ def validate_pdf(path: Path) -> tuple[bool, str]:
 
     return True, "ok"
 
+def quarantine_invalid_consume_files(
+    consume_dir: Path,
+    check_dir: Path,
+    dry_run: bool = False,
+) -> tuple[int, int]:
+    """Move invalid PDFs from the consume folder to quarantine, returning counts."""
+    quarantined = 0
+    failed = 0
+
+    if consume_dir.resolve() == check_dir.resolve():
+        raise ValueError("Consume and quarantine directories must be different")
+
+    for path in sorted(consume_dir.glob("*.pdf")):
+        if not path.is_file() or is_appledouble_file(path):
+            continue
+
+        is_valid, reason = validate_pdf(path)
+        if is_valid:
+            continue
+
+        marker = "corrupt" if reason == "corrupt" else "invalid"
+        destination = check_dir / f"{path.stem}.{marker}{path.suffix}"
+        suffix = 1
+        while destination.exists():
+            destination = check_dir / f"{path.stem}.{marker}.{suffix}{path.suffix}"
+            suffix += 1
+
+        if dry_run:
+            print(f"[QUARANTINE|DRY] {path.name}  reason={reason}")
+        else:
+            try:
+                shutil.move(str(path), str(destination))
+            except OSError as error:
+                print(f"[ERROR] Could not quarantine {path}: {error}", file=sys.stderr)
+                log(f"[ERROR] Could not quarantine {path}: {error}")
+                failed += 1
+                continue
+            print(f"[QUARANTINE] {path.name}  reason={reason}  saved_as={destination.name}")
+
+        log(f"[QUARANTINE{'|DRY' if dry_run else ''}] {path.name}  reason={reason}")
+        quarantined += 1
+
+    return quarantined, failed
+
 def file_in_consume_folder(filename: str) -> bool:
     """
     Returns True if the file already exists in the consume folder.
@@ -249,7 +301,10 @@ def compute_dir_fingerprint(directory: Path) -> str:
     Fingerprint is based on sorted filename:mtime_ns pairs.
     Returns MD5 hex digest.
     """
-    pdfs = sorted(directory.glob("*.pdf"))
+    pdfs = sorted(
+        path for path in directory.glob("*.pdf")
+        if not is_appledouble_file(path)
+    )
     if not pdfs:
         # Empty directory gets fingerprint of empty string
         return hashlib.md5(b"").hexdigest()
@@ -322,7 +377,7 @@ def main():
     parser.add_argument(
         "-n", "--dry-run",
         action="store_true",
-        help="Scan and validate without copying any files",
+        help="Scan and validate without changing any files",
     )
     parser.add_argument(
         "-f", "--force",
@@ -334,6 +389,11 @@ def main():
         action="store_true",
         help="Do not write or update .paperless_check_state files",
     )
+    parser.add_argument(
+        "--clean-consume",
+        action="store_true",
+        help="Quarantine invalid PDFs already in the consume folder",
+    )
     args = parser.parse_args()
     root_scan_dir = Path(args.root).resolve() if args.root else Path.cwd()
     verbose = args.verbose
@@ -344,6 +404,18 @@ def main():
     # Ensure runtime directories exist
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CHECK_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.clean_consume:
+        if not CONSUME_DIR.is_dir():
+            print(err(f"[ERROR] Consume folder not found: {CONSUME_DIR}"))
+            return
+        quarantined, failed = quarantine_invalid_consume_files(
+            CONSUME_DIR,
+            CHECK_DIR,
+            dry_run=dry_run,
+        )
+        print(f"Consume cleanup complete: quarantined={quarantined}, failed={failed}")
+        return
 
     log(f"=== Starting Paperless Sync {'(DRY RUN) ' if dry_run else ''}===")
     log(f"[INFO] Scanning: {root_scan_dir}")
@@ -419,7 +491,10 @@ def main():
     # Collect directories containing PDFs
     # ------------------------------------------------------------------
     print(info(f"  Scanning for PDFs in {root_scan_dir} ..."), end="", flush=True)
-    all_pdfs = list(root_scan_dir.rglob("*.pdf"))
+    all_pdfs = [
+        path for path in root_scan_dir.rglob("*.pdf")
+        if not is_appledouble_file(path)
+    ]
     pdf_total = len(all_pdfs)
     
     # Group PDFs by parent directory
@@ -490,7 +565,7 @@ def main():
             if not is_valid:
                 if not dry_run:
                     quarantine_dest = CHECK_DIR / filename
-                    shutil.copy(full_path, quarantine_dest)
+                    copy_file_data_atomic(full_path, quarantine_dest)
                 action = dim("(would quarantine)") if dry_run else ""
                 log(f"[QUARANTINE{'|DRY' if dry_run else ''}] {filename}  reason={reason}")
                 if verbose:
@@ -528,7 +603,7 @@ def main():
 
             if not dry_run:
                 dest = CONSUME_DIR / filename
-                shutil.copy(full_path, dest)
+                copy_file_data_atomic(full_path, dest)
             log(f"[INGEST{'|DRY' if dry_run else ''}] {'Would add' if dry_run else 'Added'}: {filename}")
 
             if verbose:

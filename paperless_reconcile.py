@@ -965,6 +965,8 @@ def main(argv: list[str] | None = None) -> int:
                 counts["failed"] += 1
             elif action.startswith("retriggered"):
                 counts["retriggered"] += 1
+            elif action.startswith("left in consume"):
+                counts["left_in_consume"] += 1
             else:
                 counts["organized"] += 1
         print(f"Applied actions: {dict(counts)}")

@@ -4,3 +4,4 @@ check/
 logs/
 .env
 __pycache__/
+check/

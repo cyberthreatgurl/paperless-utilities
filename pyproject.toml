@@ -34,7 +34,7 @@ paperless-mark-scanned = "mark_scanned:mark_tree_scanned_cli"
 paperless-reconcile = "paperless_reconcile:main"
 
 [tool.setuptools]
-py-modules = ["paperless_sync", "mark_scanned", "paperless_reconcile"]
+py-modules = ["paperless_sync", "mark_scanned", "paperless_reconcile", "paperless_file_utils"]
 script-files = ["import_pdfs.sh", "pre-consume.sh"]
 
 [project.urls]

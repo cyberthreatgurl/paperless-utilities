@@ -27,13 +27,17 @@ import json
 import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
+from paperless_file_utils import is_appledouble_file
 
 def compute_dir_fingerprint(directory: Path) -> str:
     """
     Compute MD5 fingerprint of all PDFs in a directory.
     Fingerprint is based on sorted filename:mtime_ns pairs.
     """
-    pdfs = sorted(directory.glob("*.pdf"))
+    pdfs = sorted(
+        path for path in directory.glob("*.pdf")
+        if not is_appledouble_file(path)
+    )
     if not pdfs:
         return hashlib.md5(b"").hexdigest()
     
@@ -46,7 +50,10 @@ def mark_directory_scanned(directory: Path) -> int:
     Create a .paperless_check_state file in the specified directory.
     Returns the number of PDFs found in this directory.
     """
-    pdfs = sorted(directory.glob("*.pdf"))
+    pdfs = sorted(
+        path for path in directory.glob("*.pdf")
+        if not is_appledouble_file(path)
+    )
     pdf_count = len(pdfs)
     
     if pdf_count == 0:
@@ -82,7 +89,10 @@ def mark_tree_scanned(root_directory: str) -> None:
     print(f"Scanning for PDFs under: {root_dir}")
     
     # Find all PDFs recursively
-    all_pdfs = list(root_dir.rglob("*.pdf"))
+    all_pdfs = [
+        path for path in root_dir.rglob("*.pdf")
+        if not is_appledouble_file(path)
+    ]
     
     if not all_pdfs:
         print("  No PDFs found.")

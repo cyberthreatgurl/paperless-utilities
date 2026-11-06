@@ -27,7 +27,7 @@ echo "Scanning '$SRC_DIR' for PDF files..."
 pdf_files=()
 while IFS= read -r -d '' file; do
     pdf_files+=("$file")
-done < <(find "$SRC_DIR" -type f -iname "*.pdf" -print0)
+done < <(find "$SRC_DIR" -type f -iname "*.pdf" ! -name '._*' -print0)
 total_files=${#pdf_files[@]}
 
 if [ "$total_files" -eq 0 ]; then

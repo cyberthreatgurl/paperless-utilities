@@ -38,6 +38,15 @@ timestamp() { date '+%Y-%m-%dT%H:%M:%S%z'; }
 log() { echo "[$(timestamp)] $1: $FILENAME - $2" >> "$LOG_FILE"; }
 debug() { echo "[$(timestamp)] $1: $FILENAME - $2" >> "$DEBUG_LOG"; }
 
+if command -v file >/dev/null 2>&1; then
+  MIME_TYPE="$(file -b --mime-type "$FILE" 2>/dev/null || echo unknown)"
+  if [ "$MIME_TYPE" != "application/pdf" ]; then
+    debug "SKIP" "not a PDF (mime=$MIME_TYPE)"
+    log "SKIP" "not a PDF (mime=$MIME_TYPE)"
+    exit 0
+  fi
+fi
+
 quarantine_and_exit() {
   local reason="$1"
   local classification="${2:-invalid}"
