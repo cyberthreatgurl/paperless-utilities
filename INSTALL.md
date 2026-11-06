@@ -57,6 +57,10 @@ Optional variables:
 # Sync PDFs to Paperless
 paperless-sync ~/Documents
 
+# Preview and quarantine invalid PDFs already in the consume folder
+paperless-sync --clean-consume --dry-run
+paperless-sync --clean-consume
+
 # Mark directories as already scanned
 paperless-mark-scanned ~/Documents
 
@@ -78,6 +82,9 @@ source venv/bin/activate
 # Run scripts
 python paperless_sync.py ~/Documents
 python mark_scanned.py ~/Documents
+
+# Clean invalid PDFs out of the configured consume folder
+python paperless_sync.py --clean-consume --dry-run
 ```
 
 ### Option 3: Create Standalone Executables (Advanced)

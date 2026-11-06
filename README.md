@@ -5,6 +5,7 @@ Tools to scan, validate, and sync PDF files to Paperless-ngx with intelligent du
 ## Features
 
 - **PDF Validation** - Detects corrupt, oversized, and password-protected files
+- **Consume Cleanup** - Finds invalid PDFs already in the consume folder and moves them to quarantine
 - **Duplicate Detection** - Checks Paperless API via MD5 checksums to avoid re-ingestion
 - **Consume Folder Pre-check** - Skips files already staged but not yet ingested
 - **Directory State Tracking** - Remembers which folders have been scanned to avoid redundant processing
@@ -59,6 +60,10 @@ paperless-sync --force ~/Documents
 
 # Show detailed progress
 paperless-sync --verbose ~/Documents
+
+# Preview and quarantine invalid PDFs already in the consume folder
+paperless-sync --clean-consume --dry-run
+paperless-sync --clean-consume
 ```
 
 ## Requirements
@@ -79,7 +84,8 @@ brew install poppler tesseract ocrmypdf jbig2enc pngquant
 `pre-consume.sh` is intended to be configured as Paperless-ngx's pre-consume
 hook. It checks for a stable, valid PDF, flattens AcroForms when detected, runs
 OCRmyPDF, and replaces the input contents only after successful output
-validation. Configure `PRECONSUME_QUARANTINE_DIR`, `PRECONSUME_ORIGINALS_DIR`,
+validation. Non-PDF inputs are left unchanged for Paperless to handle. Configure
+`PRECONSUME_QUARANTINE_DIR`, `PRECONSUME_ORIGINALS_DIR`,
 `PRECONSUME_LOG_FILE`, and `PRECONSUME_DEBUG_LOG` to change its output paths.
 It creates separate `preconsume-YYYY-MM-DD.log` and
 `preconsume-debug-YYYY-MM-DD.log` files for each local calendar day.
@@ -116,6 +122,11 @@ retrigger consume files that have no exact Paperless match or recorded hook
 failure. The action is recorded in the CSV. Use `--no-api` for a local-only
 report, or `--output /path/to/report.csv` to choose the CSV path.
 
+To inspect PDFs already in the consume folder before Paperless retries them, use
+`paperless-sync --clean-consume --dry-run`. Remove `--dry-run` to move invalid
+files into `CHECK_DIR`: malformed PDFs receive a `.corrupt.pdf` suffix, while
+other validation failures receive `.invalid.pdf`. Valid PDFs remain in consume.
+
 The Python sync tools and shell importer ignore macOS `._*` AppleDouble
 sidecars. `paperless-sync` stages file bytes without copying extended
 attributes, which helps avoid creating new sidecars on SMB consume mounts.
@@ -123,6 +134,7 @@ attributes, which helps avoid creating new sidecars on SMB consume mounts.
 ## Documentation
 
 - **[Installation Guide](INSTALL.md)** - Detailed installation options including standalone executables
+- **[Changelog](CHANGELOG.md)** - Release history
 - **[Module Docstrings](paperless_sync.py)** - Technical documentation in code
 
 ## How It Works
@@ -149,6 +161,7 @@ Options:
   -n, --dry-run     Scan without copying files
   -f, --force       Ignore saved state, re-scan all directories
   --no-state        Don't write .paperless_check_state files
+  --clean-consume   Quarantine invalid PDFs already in the consume folder
 
 Arguments:
   directory         Root folder to scan (default: current directory)
@@ -208,102 +221,3 @@ See [.github/copilot-instructions.md](.github/copilot-instructions.md) for codin
 ## License
 
 GPL-3.0-only - See LICENSE file for details
-
----
-
-## Usage
-
-```
-python paperless_sync.py [ROOT_DIR] [--dry-run] [--verbose]
-```
-
-### Arguments
-
-| Argument | Description |
-|---|---|
-| `ROOT_DIR` | Directory to scan recursively for PDFs. Defaults to the current working directory if omitted. |
-| `-n`, `--dry-run` | Scan and validate without copying any files. Reports what *would* be ingested or quarantined. |
-| `-v`, `--verbose` | Print a table showing filename, size, MD5 hash, and status for every PDF found. |
-
-### Examples
-
-Sync your Downloads folder:
-```
-python paperless_sync.py ~/Downloads
-```
-
-Preview what would be synced from a OneDrive folder without touching anything:
-```
-python paperless_sync.py ~/Library/CloudStorage/OneDrive-Personal --dry-run
-```
-
-Verbose scan of the current directory:
-```
-python paperless_sync.py --verbose
-```
-
-Dry run with verbose output:
-```
-python paperless_sync.py ~/Documents -n -v
-```
-
----
-
-## What it does
-
-1. **Environment check** — validates the scan directory, consume folder (Samba mount), Paperless API, and API token before doing any work. Results are printed as a colour-coded status block.
-
-2. **PDF validation** — each PDF is checked before ingestion:
-   - **Oversized** — larger than `MAXIMUM_FILE_SIZE`
-   - **Corrupt** — cannot be parsed by pypdf
-   - **Password-protected** — encrypted and not openable with a blank password
-
-   Invalid files are copied to the `check/` folder for manual review and are never sent to Paperless.
-
-3. **Duplicate detection** — computes the MD5 checksum of each valid PDF and queries the Paperless API. Files already in the archive are skipped.
-
-4. **Ingestion** — new, valid PDFs are copied to the consume folder. Paperless picks them up automatically from there.
-
----
-
-## Output
-
-### Status indicators
-
-| Symbol | Meaning |
-|---|---|
-| `[+] filename` | File is new and was ingested |
-| `[~] filename` | Dry-run: file would be ingested |
-| `[skip] filename` | Already exists in Paperless (duplicate) |
-| `[!] filename (reason)` | Invalid PDF — copied to `check/` |
-
-### Verbose table columns
-
-```
-  FILE                                          SIZE     MD5 HASH                           STATUS
-  + invoice.pdf                                0.42M  d41d8cd98f00b204e9800998ecf8427e  ADDED
-    old-doc.pdf                                1.10M  9e107d9d372bb6826bd81d3542a419d8  duplicate
-```
-
----
-
-## Folder structure
-
-```
-paperless-scripts/
-├── paperless_sync.py     # Main script
-├── requirements.txt
-├── logs/
-│   └── paperless_sync.log   # Created automatically on first run
-└── check/
-    └── ...                  # Quarantined PDFs land here
-```
-
-`logs/` and `check/` are created automatically on startup if they do not exist.
-
----
-
-## Logging
-
-All activity is written to `logs/paperless_sync.log`. ANSI colour codes are stripped from log output so the file remains readable with any text editor.
->>>>>>> cd91d75 (Fixes to include file count, dry-run and file-size)
